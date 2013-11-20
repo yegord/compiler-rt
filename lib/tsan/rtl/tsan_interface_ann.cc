@@ -70,6 +70,7 @@ struct ExpectRace {
   ExpectRace *prev;
   int hitcount;
   int addcount;
+  int rmcount;
   uptr addr;
   uptr size;
   char *file;
@@ -94,7 +95,7 @@ static void AddExpectRace(ExpectRace *list,
     char *f, int l, uptr addr, uptr size, char *desc) {
   ExpectRace *race = list->next;
   for (; race != list; race = race->next) {
-    if (race->addr == addr && race->size == size) {
+    if (race->addr == addr && race->size == size && race->rmcount < race->addcount) {
       race->addcount++;
       return;
     }
@@ -107,6 +108,7 @@ static void AddExpectRace(ExpectRace *list,
   race->desc[0] = 0;
   race->hitcount = 0;
   race->addcount = 1;
+  race->rmcount = 0;
   if (desc) {
     int i = 0;
     for (; i < kMaxDescLen - 1 && desc[i]; i++)
@@ -121,12 +123,23 @@ static void AddExpectRace(ExpectRace *list,
 
 static ExpectRace *FindRace(ExpectRace *list, uptr addr, uptr size) {
   for (ExpectRace *race = list->next; race != list; race = race->next) {
-    uptr maxbegin = max(race->addr, addr);
-    uptr minend = min(race->addr + race->size, addr + size);
-    if (maxbegin < minend)
-      return race;
+    if (race->rmcount < race->addcount) {
+      uptr maxbegin = max(race->addr, addr);
+      uptr minend = min(race->addr + race->size, addr + size);
+      if (maxbegin < minend)
+        return race;
+    }
   }
   return 0;
+}
+
+static void RemoveExpectRace(ExpectRace *list, uptr addr, uptr size) {
+  if (ExpectRace *race = FindRace(list, addr, size)) {
+    ++race->rmcount;
+  } else {
+    DPrintf("Removing non-existent expected/benign race: addr=%zx:%d\n",
+        addr, size);
+  }
 }
 
 static bool CheckContains(ExpectRace *list, uptr addr, uptr size) {
@@ -368,6 +381,12 @@ static void BenignRaceImpl(
   DPrintf("Add benign race: %s addr=%zx %s:%d\n", desc, mem, f, l);
 }
 
+static void RemoveBenignRaceImpl(const char *f, int l, uptr mem, uptr size) {
+  Lock lock(&dyn_ann_ctx->mtx);
+  RemoveExpectRace(&dyn_ann_ctx->benign, mem, size);
+  DPrintf("Remove benign race: addr=%zx %s:%d\n", mem, f, l);
+}
+
 // FIXME: Turn it off later. WTF is benign race?1?? Go talk to Hans Boehm.
 void INTERFACE_ATTRIBUTE AnnotateBenignRaceSized(
     char *f, int l, uptr mem, uptr size, char *desc) {
@@ -379,6 +398,16 @@ void INTERFACE_ATTRIBUTE AnnotateBenignRace(
     char *f, int l, uptr mem, char *desc) {
   SCOPED_ANNOTATION(AnnotateBenignRace);
   BenignRaceImpl(f, l, mem, 1, desc);
+}
+
+void INTERFACE_ATTRIBUTE DeannotateBenignRaceSized(const char *f, int l, uptr mem, uptr size) {
+  SCOPED_ANNOTATION(DeannotateBenignRaceSized);
+  RemoveBenignRaceImpl(f, l, mem, size);
+}
+
+void INTERFACE_ATTRIBUTE DeannotateBenignRace(const char *f, int l, uptr mem) {
+  SCOPED_ANNOTATION(DeannotateBenignRace);
+  RemoveBenignRaceImpl(f, l, mem, 1);
 }
 
 void INTERFACE_ATTRIBUTE AnnotateIgnoreReadsBegin(char *f, int l) {

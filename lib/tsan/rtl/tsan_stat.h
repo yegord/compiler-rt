@@ -448,6 +448,8 @@ enum StatType {
   StatAnnotateExpectRace,
   StatAnnotateBenignRaceSized,
   StatAnnotateBenignRace,
+  StatDeannotateBenignRaceSized,
+  StatDeannotateBenignRace,
   StatAnnotateIgnoreReadsBegin,
   StatAnnotateIgnoreReadsEnd,
   StatAnnotateIgnoreWritesBegin,
